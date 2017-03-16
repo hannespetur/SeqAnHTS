@@ -3,7 +3,6 @@
 
 #include <cstdlib>
 #include <string>
-// #include <stdlib.h>
 #include <sys/stat.h>
 #include <iostream>
 #include <cstring>
@@ -11,7 +10,9 @@
 
 #include <seqan/vcf_io/vcf_record.h>
 
+
 namespace seqan {
+
 
 class Tabix
 {
@@ -22,22 +23,38 @@ class Tabix
   const tbx_conf_t *idxconf;
   String<String<char> > chroms;
   unsigned rID = 0;
-
-
-  // Tabix(void) { }
+  StringSet<CharString> samples;
 };
 
+
 inline void
-clear(Tabix index)
+clear(Tabix & index)
 {
-    // tbx_itr_destroy(index.hts_iter);
-    // tbx_destroy(index.tbx);
+    if (index.fp)
+    {
+        hts_close(index.fp);
+        index.fp = NULL;
+    }
+
+    if (index.hts_iter)
+    {
+        tbx_itr_destroy(index.hts_iter);
+        index.hts_iter = NULL;
+    }
+
+    if (index.tbx)
+    {
+        tbx_destroy(index.tbx);
+        index.tbx = NULL;
+    }
+
     clear(index.chroms);
     index.rID = 0;
+    clear(index.samples);
 }
 
 inline void
-getHeader(String<char> & header, Tabix & index)
+getHeader(seqan::CharString& header_string, Tabix & index)
 {
   // clear(header);
   kstring_t str = {0,0,0};
@@ -50,21 +67,33 @@ getHeader(String<char> & header, Tabix & index)
     }
     else
     {
-      append(header, str.s);
-      append(header, "\n");
+      if (length(str.s) > 5 && strncmp(str.s, "#CHROM", 6) == 0)
+      {
+        seqan::CharString h_line(str.s);
+        seqan::strSplit(index.samples, h_line, seqan::EqualsChar<'\t'>());
+        size_t end = 8;
+        if (length(index.samples) > 8 && index.samples[8] == "FORMAT") end = 9;
+        erase(index.samples, 0, end);
+      }
+      else
+      {
+        append(header_string, str.s);
+        append(header_string, "\n");
+      }
     }
   }
 
   free(str.s);
 
-  // set back to start
+  //set back to start
   // index.rID = 0;
-
+  //
   // if (index.hts_iter)
   // {
   //   tbx_itr_destroy(index.hts_iter);
+  //   index.hts_iter = NULL;
   // }
-
+  //
   // index.hts_iter = tbx_itr_querys(index.tbx, toCString(index.chroms[rID]));
 }
 
@@ -77,9 +106,15 @@ _onLastRId(Tabix & index)
 inline void
 _nextRId(Tabix & index)
 {
-  ++index.rID;
-  tbx_itr_destroy(index.hts_iter);
-  index.hts_iter = tbx_itr_querys(index.tbx, toCString(index.chroms[index.rID]));
+    ++index.rID;
+
+    if (index.hts_iter)
+    {
+        tbx_itr_destroy(index.hts_iter);
+        index.hts_iter = NULL;
+    }
+
+    index.hts_iter = tbx_itr_querys(index.tbx, toCString(index.chroms[index.rID]));
 }
 
 inline bool
@@ -132,6 +167,12 @@ _insertDataToVcfRecord(VcfRecord & record, String<char> const & line, unsigned c
     if (length(splitted_line) > 8)
     {
         record.format = splitted_line[8];
+    }
+
+    if (length(splitted_line) > 9)
+    {
+        erase(splitted_line, 0, 9);
+        record.genotypeInfos = std::move(splitted_line);
     }
 }
 
@@ -218,7 +259,12 @@ readRecord(VcfRecord & record, Tabix & index)
 inline void
 setRegion(Tabix & index, const char * region)
 {
-    tbx_itr_destroy(index.hts_iter);
+    if (index.hts_iter)
+    {
+        tbx_itr_destroy(index.hts_iter);
+        index.hts_iter = NULL;
+    }
+
     index.hts_iter = tbx_itr_querys(index.tbx, region);
 }
 
